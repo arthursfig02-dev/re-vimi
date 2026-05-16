@@ -160,7 +160,7 @@ hr#dois{height:1px;background:#000;border:none;margin-top:1px;}
 #vi-previsu .ds>span,#vi-previsu .fixo-a>span,#vi-previsu .fixo-b>span,
 #vi-previsu .resp>span:not(.pv-empty),#vi-previsu .resp-est-aju>span{color:#000;}
 
-@media(max-width:1250px){#vi-previsu{display:none!important;}main{padding:0 16px 60px;justify-content:center;}#vi-editor{width:100%;max-width:520px;}}
+@media(max-width:1250px){#vi-previsu{position:fixed!important;top:0!important;left:-9999px!important;width:21cm!important;min-height:29.7cm!important;visibility:hidden!important;pointer-events:none!important;z-index:-999!important;}main{padding:0 16px 60px;justify-content:center;}#vi-editor{width:100%;max-width:520px;}}
 @media print{body{background:#fff!important;}#viministerio,#vi-editor{display:none!important;}main{margin:0!important;padding:0!important;display:block!important;}#vi-previsu{display:block!important;border:none!important;box-shadow:none!important;width:21cm!important;min-height:29.7cm!important;padding:.5cm!important;margin:0 auto!important;}}
 
 /* Badge não salvo */
@@ -562,54 +562,34 @@ async function capturePreview(){
 
     const original = document.getElementById('vi-previsu');
 
-    // container temporário
+    // container temporário fora da tela para não interferir no layout
     const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:fixed;top:0;left:-9999px;width:21cm;background:#fff;z-index:-999;opacity:0.01;pointer-events:none;overflow:visible;';
 
-    wrapper.style.position = 'fixed';
-    wrapper.style.top = '0';
-    wrapper.style.left = '0';
-    wrapper.style.width = '100vw';
-    wrapper.style.height = '100vh';
-    wrapper.style.background = '#fff';
-    wrapper.style.zIndex = '-1';
-    wrapper.style.opacity = '0.01';
-    wrapper.style.pointerEvents = 'none';
-    wrapper.style.overflow = 'auto';
-
-    // clona preview
+    // clona o preview e força visibilidade total
     const clone = original.cloneNode(true);
-
-    // força renderização no mobile
-    clone.style.display = 'block';
-    clone.style.visibility = 'visible';
-    clone.style.opacity = '1';
+    clone.style.cssText = 'display:block!important;visibility:visible!important;opacity:1!important;position:static!important;left:auto!important;width:21cm!important;min-height:29.7cm!important;';
 
     wrapper.appendChild(clone);
-
     document.body.appendChild(wrapper);
 
-    // espera imagens carregarem
+    // espera imagens carregarem com crossOrigin correto
     const imgs = clone.querySelectorAll('img');
-
     await Promise.all(
-        Array.from(imgs).map(img => {
-            return new Promise(resolve => {
-
-                img.crossOrigin = 'anonymous';
-
-                if (img.complete) {
-                    resolve();
-                } else {
-                    img.onload = resolve;
-                    img.onerror = resolve;
-                }
-
-            });
-        })
+        Array.from(imgs).map(img => new Promise(resolve => {
+            img.crossOrigin = 'anonymous';
+            if (img.complete && img.naturalWidth > 0) {
+                resolve();
+            } else {
+                img.onload = resolve;
+                img.onerror = resolve;
+            }
+        }))
     );
 
-    // espera renderização mobile
-    await new Promise(r => setTimeout(r, 800));
+    // aguarda o browser calcular o layout do clone
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await new Promise(r => setTimeout(r, 600));
 
     const canvas = await html2canvas(clone, {
         scale: 2,
@@ -617,7 +597,9 @@ async function capturePreview(){
         allowTaint: true,
         backgroundColor: '#ffffff',
         logging: false,
-        imageTimeout: 15000
+        imageTimeout: 15000,
+        width: clone.scrollWidth,
+        height: clone.scrollHeight
     });
 
     document.body.removeChild(wrapper);
@@ -658,7 +640,28 @@ async function exportPDF(){
             Math.min(imgHeight, pageHeight)
         );
 
-        pdf.save('vida-e-ministerio.pdf');
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+        if(isMobile && navigator.canShare){
+            // Web Share API — abre painel nativo de compartilhar/salvar no iOS e Android
+            const pdfBlob = pdf.output('blob');
+            const file = new File([pdfBlob], 'vida-e-ministerio.pdf', { type: 'application/pdf' });
+            if(navigator.canShare({ files: [file] })){
+                await navigator.share({ files: [file], title: 'Vida e Ministério' });
+            } else {
+                // fallback: link de download via Blob URL
+                const blobUrl = URL.createObjectURL(pdfBlob);
+                const link = document.createElement('a');
+                link.href = blobUrl;
+                link.download = 'vida-e-ministerio.pdf';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+            }
+        } else {
+            pdf.save('vida-e-ministerio.pdf');
+        }
 
         toast('✔ PDF exportado!', '#0E097F');
 
@@ -683,51 +686,33 @@ async function exportIMG(){
 
         const dataUrl = canvas.toDataURL('image/png');
 
-        // mobile-friendly
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-        if(isMobile){
-
-            const win = window.open();
-
-            win.document.write(`
-                <html>
-                    <head>
-                        <title>Imagem Exportada</title>
-                        <style>
-                            body{
-                                margin:0;
-                                background:#111;
-                                display:flex;
-                                justify-content:center;
-                                align-items:center;
-                                min-height:100vh;
-                            }
-                            img{
-                                width:100%;
-                                height:auto;
-                            }
-                        </style>
-                    </head>
-                    <body>
-                        <img src="${dataUrl}">
-                    </body>
-                </html>
-            `);
-
-        }else{
-
+        if(isMobile && navigator.canShare){
+            // Web Share API — abre painel nativo de compartilhar/salvar no iOS e Android
+            const blob = await fetch(dataUrl).then(r => r.blob());
+            const file = new File([blob], 'vida-e-ministerio.png', { type: 'image/png' });
+            if(navigator.canShare({ files: [file] })){
+                await navigator.share({ files: [file], title: 'Vida e Ministério' });
+            } else {
+                // fallback: link de download via Blob URL
+                const blobUrl = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = blobUrl;
+                link.download = 'vida-e-ministerio.png';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+            }
+        } else {
+            // Desktop — download direto
             const link = document.createElement('a');
-
             link.download = 'vida-e-ministerio.png';
             link.href = dataUrl;
-
             document.body.appendChild(link);
-
             link.click();
-
             document.body.removeChild(link);
-
         }
 
         toast('✔ Imagem exportada!', '#F59E0B');
@@ -753,13 +738,17 @@ window.addEventListener('resize',()=>{ if(window.innerWidth>900)closeBurger(); }
 /* IMPRESSÃO E PREVIEW COM ESTILOS */
 function getEstilos(){ let s=''; document.querySelectorAll('style').forEach(e=>{ s+=e.outerHTML; }); document.querySelectorAll('link[rel="stylesheet"]').forEach(e=>{ s+=e.outerHTML; }); return s; }
 function imprimirPreview(){
-    const el=document.getElementById('vi-previsu'); const win=window.open('','_blank');
-    win.document.write(`<!DOCTYPE html><html lang="pt-br"><head><meta charset="UTF-8"><title>Impressão</title>${getEstilos()}<style>body{margin:0;padding:20px;background:#fff;}#viministerio,#vi-editor{display:none!important;}main{margin:0!important;padding:0!important;display:block!important;}#vi-previsu{display:block!important;border:none!important;box-shadow:none!important;width:21cm!important;min-height:29.7cm!important;padding:.5cm!important;margin:0 auto!important;}</style></head><body><main>${el.outerHTML}</main><script>window.onload=function(){window.print();}<\/script></body></html>`);
+    const el=document.getElementById('vi-previsu');
+    const win=window.open('','_blank');
+    if(!win){ toast('Popup bloqueado. Permita popups para imprimir.','#f59e0b'); return; }
+    win.document.write(`<!DOCTYPE html><html lang="pt-br"><head><meta charset="UTF-8"><title>Impressão</title>${getEstilos()}<style>body{margin:0;padding:20px;background:#fff;}#viministerio,#vi-editor{display:none!important;}main{margin:0!important;padding:0!important;display:block!important;}#vi-previsu{display:block!important;position:static!important;left:auto!important;visibility:visible!important;border:none!important;box-shadow:none!important;width:21cm!important;min-height:29.7cm!important;padding:.5cm!important;margin:0 auto!important;}</style></head><body><main>${el.outerHTML}</main><script>window.onload=function(){window.print();}<\/script></body></html>`);
     win.document.close();
 }
 function openPreview(){
-    const el=document.getElementById('vi-previsu'); const win=window.open('','_blank');
-    win.document.write(`<!DOCTYPE html><html lang="pt-br"><head><meta charset="UTF-8"><title>Pré-Visualização</title>${getEstilos()}<style>body{margin:0;padding:20px;background:#e9eef6;}#viministerio,#vi-editor{display:none!important;}main{margin:0!important;padding:20px!important;display:flex!important;justify-content:center!important;}#vi-previsu{display:block!important;}</style></head><body><main>${el.outerHTML}</main></body></html>`);
+    const el=document.getElementById('vi-previsu');
+    const win=window.open('','_blank');
+    if(!win){ toast('Popup bloqueado. Permita popups para visualizar.','#f59e0b'); return; }
+    win.document.write(`<!DOCTYPE html><html lang="pt-br"><head><meta charset="UTF-8"><title>Pré-Visualização</title>${getEstilos()}<style>body{margin:0;padding:20px;background:#e9eef6;}#viministerio,#vi-editor{display:none!important;}main{margin:0!important;padding:20px!important;display:flex!important;justify-content:center!important;}#vi-previsu{display:block!important;position:static!important;left:auto!important;visibility:visible!important;}</style></head><body><main>${el.outerHTML}</main></body></html>`);
     win.document.close();
 }
 

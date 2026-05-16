@@ -548,29 +548,53 @@ window.addEventListener('DOMContentLoaded',()=>{
 });
 
 /* EXPORT */
-function showOvl(msg){ document.getElementById('export-msg').textContent=msg; document.getElementById('export-overlay').classList.add('active'); }
-function hideOvl(){ document.getElementById('export-overlay').classList.remove('active'); }
+/* EXPORT */
+function showOvl(msg){
+    document.getElementById('export-msg').textContent = msg;
+    document.getElementById('export-overlay').classList.add('active');
+}
+
+function hideOvl(){
+    document.getElementById('export-overlay').classList.remove('active');
+}
+
 async function capturePreview(){
-    const el = document.getElementById('vi-previsu');
 
-    // Clona o preview para evitar problemas de renderização
-    const clone = el.cloneNode(true);
+    const original = document.getElementById('vi-previsu');
 
-    clone.style.position = 'fixed';
-    clone.style.left = '-99999px';
-    clone.style.top = '0';
+    // container temporário
+    const wrapper = document.createElement('div');
+
+    wrapper.style.position = 'fixed';
+    wrapper.style.top = '0';
+    wrapper.style.left = '0';
+    wrapper.style.width = '100vw';
+    wrapper.style.height = '100vh';
+    wrapper.style.background = '#fff';
+    wrapper.style.zIndex = '-1';
+    wrapper.style.opacity = '0.01';
+    wrapper.style.pointerEvents = 'none';
+    wrapper.style.overflow = 'auto';
+
+    // clona preview
+    const clone = original.cloneNode(true);
+
+    // força renderização no mobile
     clone.style.display = 'block';
     clone.style.visibility = 'visible';
     clone.style.opacity = '1';
-    clone.style.zIndex = '-1';
 
-    document.body.appendChild(clone);
+    wrapper.appendChild(clone);
 
-    // Corrige imagens locais
+    document.body.appendChild(wrapper);
+
+    // espera imagens carregarem
     const imgs = clone.querySelectorAll('img');
+
     await Promise.all(
         Array.from(imgs).map(img => {
             return new Promise(resolve => {
+
                 img.crossOrigin = 'anonymous';
 
                 if (img.complete) {
@@ -579,11 +603,13 @@ async function capturePreview(){
                     img.onload = resolve;
                     img.onerror = resolve;
                 }
+
             });
         })
     );
 
-    await new Promise(r => setTimeout(r, 500));
+    // espera renderização mobile
+    await new Promise(r => setTimeout(r, 800));
 
     const canvas = await html2canvas(clone, {
         scale: 2,
@@ -591,25 +617,28 @@ async function capturePreview(){
         allowTaint: true,
         backgroundColor: '#ffffff',
         logging: false,
-        imageTimeout: 15000,
-        removeContainer: true
+        imageTimeout: 15000
     });
 
-    document.body.removeChild(clone);
+    document.body.removeChild(wrapper);
 
     return canvas;
 }
+
 async function exportPDF(){
+
     showOvl('Gerando PDF…');
 
     try{
+
         const canvas = await capturePreview();
+
         const { jsPDF } = window.jspdf;
 
         const pdf = new jsPDF({
-            orientation:'portrait',
-            unit:'mm',
-            format:'a4'
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
         });
 
         const imgData = canvas.toDataURL('image/png');
@@ -631,37 +660,84 @@ async function exportPDF(){
 
         pdf.save('vida-e-ministerio.pdf');
 
-        toast('✔ PDF exportado!','#0E097F');
+        toast('✔ PDF exportado!', '#0E097F');
 
     }catch(e){
+
         console.error(e);
-        toast('Erro ao gerar PDF.','#ef4444');
+
+        toast('Erro ao gerar PDF.', '#ef4444');
+
     }
 
     hideOvl();
 }
+
 async function exportIMG(){
+
     showOvl('Gerando imagem…');
 
     try{
+
         const canvas = await capturePreview();
 
-        const link = document.createElement('a');
+        const dataUrl = canvas.toDataURL('image/png');
 
-        link.download = 'vida-e-ministerio.png';
-        link.href = canvas.toDataURL('image/png');
+        // mobile-friendly
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-        document.body.appendChild(link);
+        if(isMobile){
 
-        link.click();
+            const win = window.open();
 
-        document.body.removeChild(link);
+            win.document.write(`
+                <html>
+                    <head>
+                        <title>Imagem Exportada</title>
+                        <style>
+                            body{
+                                margin:0;
+                                background:#111;
+                                display:flex;
+                                justify-content:center;
+                                align-items:center;
+                                min-height:100vh;
+                            }
+                            img{
+                                width:100%;
+                                height:auto;
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <img src="${dataUrl}">
+                    </body>
+                </html>
+            `);
 
-        toast('✔ Imagem exportada!','#F59E0B');
+        }else{
+
+            const link = document.createElement('a');
+
+            link.download = 'vida-e-ministerio.png';
+            link.href = dataUrl;
+
+            document.body.appendChild(link);
+
+            link.click();
+
+            document.body.removeChild(link);
+
+        }
+
+        toast('✔ Imagem exportada!', '#F59E0B');
 
     }catch(e){
+
         console.error(e);
-        toast('Erro ao gerar imagem.','#ef4444');
+
+        toast('Erro ao gerar imagem.', '#ef4444');
+
     }
 
     hideOvl();
